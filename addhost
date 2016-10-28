@@ -1,0 +1,123 @@
+#!/usr/bin/env python
+
+import argparse
+import os
+import subprocess
+import socket
+
+
+SSH_CONFIG = os.environ.get('HOME', "") + "/.ssh/config"
+TMP_SSH_CONFIG = os.environ.get('HOME', "") + "/.ssh/config.tmp"
+HOSTS = "/etc/hosts"
+TMP_HOST = "/tmp/hosts.tmp"
+FOUND_PREVIOUS = 1
+NO_PREVIOUS_RECORDS = 2
+
+def getArgs():
+	parser = argparse.ArgumentParser()
+	parser.add_argument("-n", "--name")
+	parser.add_argument("host")
+	parser.add_argument("-u", "--user")
+	parser.add_argument("-s", "--section")
+	parser.add_argument("--debug", action='store_true')
+	parser.add_argument("--update", action='store_true')
+
+	args = parser.parse_args()
+
+	if None in [args.host, args.user, args.name]:
+		parser.error("All argumets are required")
+
+	return args
+
+def goToSection(section, file, name):
+	i = 0
+	gotStart = False
+	for line in file:
+		if not gotStart and line.startswith("#") and section in line.strip().split(" "):
+			gotStart = True
+		elif gotStart and name in line.strip().split(" "):
+			return i, FOUND_PREVIOUS
+		elif gotStart and line.startswith("#"):
+			return i, NO_PREVIOUS_RECORDS
+		i += 1
+
+	file.append("# %s\n" % section)
+	return i + 1, NO_PREVIOUS_RECORDS
+
+
+def generateSSHConfigLines(name, hostname, username=None):
+	lines = []
+	lines.append("Host %s\n" % name)
+	lines.append("\tHostName %s\n" % hostname)
+	if username is not None:
+		lines.append("\tUser %s\n" % username)
+	lines.append("\n")
+
+	return lines
+
+
+def alreadyInHosts(name, hosts_text):
+	for line in hosts_text:
+		if name in line.strip().split():
+			return True
+	return False
+
+
+def getipaddr(hostname):
+	return socket.gethostbyname(hostname)
+
+def insertLines(source, newlines, pos):
+	return source[:pos] + newlines + source[pos:]
+
+
+def main():
+	args = getArgs()
+
+	# /etc/hosts
+
+	ipaddr = getipaddr(args.host)
+
+	hosts_text = []
+	with open(HOSTS, "r") as hosts_file:
+		for line in hosts_file:
+			hosts_text.append(line)
+
+	if not alreadyInHosts(args.name, hosts_text):
+		hosts_text.append("%s\t%s\n" % (ipaddr, args.name))
+
+
+	# .ssh/config
+
+	ssh_config_text = []
+	with open(SSH_CONFIG, "r") as ssh_config:
+		ssh_config_text = [line for line in ssh_config]
+
+	pos, foundPrevious = goToSection(args.section, ssh_config_text, args.name)
+	if foundPrevious == FOUND_PREVIOUS:
+		print "Updates not implemented yet"
+		return 1
+	newLines = generateSSHConfigLines(args.name, args.host, args.user)
+
+	ssh_config_text = insertLines(ssh_config_text, newLines, pos)
+
+
+	if not args.debug:
+		with open(TMP_SSH_CONFIG, "wc") as ssh_config:
+			for line in ssh_config_text:
+				ssh_config.write(line)
+
+		with open(TMP_HOST, "wc") as ssh_config:
+			for line in hosts_text:
+				ssh_config.write(line)
+
+		# swap files
+		subprocess.call(['/bin/mv', TMP_SSH_CONFIG, SSH_CONFIG])
+		subprocess.call(['/usr/bin/sudo', '/bin/mv', TMP_HOST, HOSTS])
+
+	else:
+		print "".join(ssh_config_text)
+		print "\n##########\n"
+		print "".join(hosts_text)
+
+if __name__ == '__main__':
+	main()
